@@ -1,0 +1,29 @@
+# --- Secrets / local config (never commit) ---
+.env
+!.env.example
+
+# --- Data & model artifacts (live on Drive / HF / remote box) ---
+*.jsonl
+corpus/
+adapters/
+checkpoints/
+results/
+figures/
+FedDAPT/
+*.bin
+*.safetensors
+
+# --- Notebook / Python cruft ---
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- IDE ---
+.idea/
+.vscode/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
