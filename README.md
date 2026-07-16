@@ -61,7 +61,6 @@ Every notebook auto-skips finished work.
 - [x] Proper train/val/test split (70/15/15, stratified) + LM val set; validation-based round selection
 - [ ] Run the Stage-1 experiment matrix on GPU (adapters not yet trained)
 - [ ] Multi-seed + **validate DP accounting** (current DP-FedAvg noise is a placeholder)
-- [ ] Fix NVD collection (API returned 0 CVEs — 404 in `0_collection`)
 - [ ] Test & document the HuggingFace model
 
 ## Configuration (env vars / `.env`)
