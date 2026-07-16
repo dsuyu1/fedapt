@@ -1,4 +1,4 @@
-# FeDAPT: Federated Domain-Adaptive Tuning for Security Applications
+# Federated Domain-Adaptive Tuning for Security Applications
 
 Notebooks run on Colab (GPU) — or on-prem once the cluster is available. This
 repo is the source of truth for code; large artifacts (corpus, adapters,
