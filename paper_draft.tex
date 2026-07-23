@@ -1,0 +1,138 @@
+\documentclass[11pt,a4paper]{article}
+% If compiling with LaTeLL style:
+%\usepackage[hyperref]{latell}
+% Standard packages for standalone compilation preview:
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{times}
+\usepackage{latexsym}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{microtype}
+
+\newcommand\BibTeX{B\textsc{ib}\TeX}
+
+\title{FeDAPT: Federated Domain-Adaptive Pre-Training for\\Cross-Domain Security Assistant LLMs}
+
+\author{Research Draft \\
+  Department of Computer Science \\
+  \texttt{fedapt-research@domain.org}}
+
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Large Language Models (LLMs) show immense promise as specialized automated assistants in Security Operations Centers (SOCs). However, training an effective security assistant requires grounding in diverse, multi-domain telemetry (endpoint, network, cloud), which security organizations cannot pool or share due to strict privacy, compliance, and competitive risks. We introduce \textbf{FeDAPT}, a two-stage federated framework designed to collaboratively pre-train a domain-adapted security LLM across a network of organizations without exposing raw, sensitive telemetry. 
+
+FeDAPT decouples learning into two distinct stages: (1) \emph{Federated Domain-Adaptive Pre-Training (DAPT)} over a shared, public prose corpus (threat intelligence, ATT\&CK procedures, Sigma rules, CVEs) to learn foundational security language and reasoning, followed by (2) \emph{Local Task Tuning} on private, organization-specific log-to-prose task pairs. We evaluate FeDAPT across non-IID domain distributions ($\alpha = 0.5$) under user-level Differential Privacy (DP-FedAvg tracked via RDP) and Byzantine adversarial attacks (sign-flipping, scaling, Gaussian noise, data poisoning). Using a multi-tiered evaluation harness featuring CLEV-style reference-aware LLM-as-a-judge voting, empirical results demonstrate that federated DAPT significantly outperforms standalone local adaptation while keeping private telemetry strictly on-device.
+\end{abstract}
+
+\section{Introduction}
+
+Modern Security Operations Centers (SOCs) are overwhelmed by the velocity and heterogeneity of security telemetry. Security analysts must rapidly correlate evidence across disparate operational domains—including endpoint process trees (Sysmon, Windows Event 4688), network traffic (Zeek, NetFlow, Suricata), and cloud audit trails (AWS CloudTrail, Azure, Okta). While Large Language Models (LLMs) have emerged as powerful tools for automated explanation and triage, deploying off-the-shelf general-purpose LLMs in specialized security environments presents two major challenges:
+
+\begin{enumerate}
+    \item \textbf{Domain Specialization vs. Privacy Constraints:} A single organization rarely possesses sufficient volume or domain variety in its local telemetry to train a comprehensive security assistant. However, directly pooling raw telemetry across organizations to train a centralized model violates regulatory mandates (e.g., GDPR, HIPAA), customer privacy contracts, and proprietary boundaries.
+    \item \textbf{Telemetry Grounding vs. Language Reasoning:} Raw log entries (e.g., JSON blobs or Sysmon XML lines) lack natural language context. An effective security assistant must bridge the gap between technical log artifacts and human-understandable prose explanations.
+\end{enumerate}
+
+To address these challenges, we present \textbf{FeDAPT} (\textbf{Fe}derated \textbf{D}omain-\textbf{A}daptive \textbf{P}re-\textbf{T}raining), a framework designed to answer a fundamental research question: \emph{Can a network of security organizations collaboratively pre-train a superior domain-assistant LLM without sharing their private data?}
+
+FeDAPT achieves this by establishing a strict, principled separation between shared knowledge and local data:
+\begin{itemize}
+    \item \textbf{Shared Knowledge Substrate (Prose Corpus):} Public, shareable natural-language security texts (MITRE ATT\&CK, Sigma detection rules, NVD CVE descriptions, CISA KEV) are federated in Stage 1 to pre-train a shared Low-Rank Adaptation (LoRA) domain adapter across organizations.
+    \item \textbf{Private Grounding Data (Log Telemetry):} Sensitive log streams (\texttt{splunk/attack\_data} and benign telemetry) remain strictly local to each organization. In Stage 2, clients warm-start from the federated adapter and perform local completion-only task tuning on their private data.
+\end{itemize}
+
+\paragraph{Main Contributions:}
+\begin{enumerate}
+    \item \textbf{Two-Stage Decoupled Architecture:} We propose a clean separation between federated domain-adaptive pre-training on public prose and local completion-only instruction tuning on private telemetry.
+    \item \textbf{Controlled Ablation Framework:} We define an $A/B/C/D$ ablation matrix (No DAPT, Local DAPT, Federated DAPT, Centralized DAPT) that explicitly isolates the net utility gained by participating in the federated network ($C - B$).
+    \item \textbf{Robustness \& Privacy Evaluation:} We benchmark FeDAPT under non-IID Dirichlet label skew ($\alpha=0.5$), user-level Differential Privacy (RDP-accounted DP-FedAvg), and Byzantine adversary simulations (sign-flip, scaling, noise, and data poisoning) across robust aggregators (Krum, Trimmed-Mean).
+    \item \textbf{Defensible CLEV Evaluation:} We implement a reference-aware, 2+1 tie-breaking LLM-as-a-judge harness validated against human annotations via Cohen's $\kappa$ and Macro-$F_1$.
+\end{enumerate}
+
+\section{Methodology}
+
+\subsection{Two-Stage Training Pipeline}
+The FeDAPT pipeline separates collaborative domain adaptation from local task specialization, as illustrated in the overall workflow:
+
+\subsubsection{Stage 1: Federated Domain-Adaptive Pre-Training (DAPT)}
+In Stage 1, a network of $N$ organizations collaboratively trains a shared LoRA adapter on a curated prose corpus. The base model parameters $\theta_{\text{base}}$ remain frozen, while LoRA parameters $w \in \mathbb{R}^d$ are updated. In each round $r \in \{1, \dots, R\}$:
+\begin{enumerate}
+    \item The central server broadcasts the current global adapter weights $w^{(r)}$ to all clients.
+    \item Each client $i \in \{1, \dots, N\}$ initializes its local model with $w^{(r)}$ and performs $\tau$ local steps of causal language modeling on its prose shard $\mathcal{D}_i^{\text{prose}}$:
+    \begin{equation}
+        \mathcal{L}_{\text{DAPT}}(w) = -\sum_{t=1}^{T} \log P(x_t \mid x_{<t}; \theta_{\text{base}}, w)
+    \end{equation}
+    If FedProx is enabled, a proximal term is added to constrain local drift:
+    \begin{equation}
+        \mathcal{L}_{\text{FedProx}}(w) = \mathcal{L}_{\text{DAPT}}(w) + \frac{\mu}{2} \| w - w^{(r)} \|^2
+    \end{equation}
+    \item Clients compute their parameter update delta $\Delta w_i = w_i^{(\tau)} - w^{(r)}$.
+    \item The server aggregates the updates to produce the updated global adapter $w^{(r+1)}$. Validation perplexity on a held-out prose set ($\mathcal{D}_{\text{val}}^{\text{LM}}$) determines the optimal round adapter.
+\end{enumerate}
+
+\subsubsection{Stage 2: Local Task Tuning}
+In Stage 2, each organization warm-starts a model with the global Stage-1 adapter $w^*$ and performs local instruction tuning on its private, log-grounded dataset $\mathcal{D}_i^{\text{task}}$. To prevent prompt degradation, we enforce \textbf{Completion-Only Training}: prompt tokens ($x_{\text{prompt}}$) and padding tokens are masked with a label value of $-100$, ensuring loss gradients are computed strictly over the target prose completion ($y_{\text{target}}$):
+\begin{equation}
+    \mathcal{L}_{\text{task}}(w) = -\sum_{j \in |y|} \log P(y_j \mid y_{<j}, x_{\text{prompt}}; \theta_{\text{base}}, w)
+\end{equation}
+
+\subsection{Data Layer \& Non-IID Partitioning}
+
+\subsubsection{Public Prose Corpus (Stage 1)}
+The shared DAPT corpus consists of natural language security text collected from four authoritative sources:
+\begin{itemize}
+    \item \textbf{MITRE ATT\&CK Enterprise:} Technique descriptions, threat group profiles, software/malware analyses, and procedure examples.
+    \item \textbf{SigmaHQ Rules:} Natural language detection logic and metadata categorized by log source.
+    \item \textbf{NVD CVEs:} English vulnerability descriptions from the National Vulnerability Database.
+    \item \textbf{CISA KEV:} Catalog descriptions of Known Exploited Vulnerabilities.
+\end{itemize}
+
+\subsubsection{Private Log Telemetry \& Non-IID Dirichlet Skew (Stage 2)}
+Private datasets comprise raw security telemetry from \texttt{splunk/attack\_data} (malicious class) paired with baseline benign log feeds (benign class). Telemetry spans three primary security domains: \emph{Endpoint} (Sysmon, WinEvent 4688, PowerShell), \emph{Network} (Zeek, Suricata, Firewall), and \emph{Cloud} (AWS CloudTrail, Azure Audit, Okta).
+
+To simulate real-world heterogeneity across enterprise SOCs, data is partitioned non-IID across $N=6$ clients using a Dirichlet distribution $\boldsymbol{p} \sim \text{Dir}(\alpha)$ over security domains ($\alpha = 0.5$). A low $\alpha$ concentrates specific domains within individual clients (e.g., Client 0 receives predominantly endpoint logs, while Client 1 receives network logs).
+
+\subsubsection{Task Taxonomy}
+Stage 2 evaluates four distinct output tasks (all returning prose):
+\begin{enumerate}
+    \item \texttt{explain\_example}: Case walkthrough of an attack procedure.
+    \item \texttt{explain\_log}: Interpretation of raw log telemetry snippet (\emph{primary}).
+    \item \texttt{general\_qa}: Open security domain question-answering.
+    \item \texttt{verdict}: Binary classification (benign vs. malicious) accompanied by a structured paragraph rationale (\emph{primary}).
+\end{enumerate}
+
+\subsection{Federated Mechanics, Privacy, and Robustness}
+
+\subsection{Differential Privacy (DP-FedAvg)}
+To protect against membership inference and model inversion, we implement user-level DP-FedAvg. Before aggregation, each client update $\Delta w_i$ is clipped to an $L_2$ norm bound $C$, and zero-mean Gaussian noise is added:
+\begin{equation}
+    \tilde{\Delta w}_i = \text{clip}(\Delta w_i, C) + \mathcal{N}\left(0, \sigma^2 C^2 \mathbf{I}\right)
+\end{equation}
+Privacy loss over $R$ rounds is formally tracked using Rényi Differential Privacy (RDP) via Opacus accountants for a target $\epsilon$ given $\delta = 10^{-5}$.
+
+\subsection{Byzantine Adversary Simulations}
+We model malicious/compromised participants ($f = 1$ malicious client out of $N = 6$) executing four attack strategies:
+\begin{itemize}
+    \item \textbf{\texttt{sign\_flip}:} Reverses and amplifies the update ($\Delta w_i \to - \beta \Delta w_i$).
+    \item \textbf{\texttt{scale}:} Amplifies the update magnitude ($\Delta w_i \to \beta \Delta w_i, \beta=10$) to dominate the mean.
+    \item \textbf{\texttt{gaussian}:} Replaces the update vector with random Gaussian noise.
+    \item \textbf{\texttt{data\_poison}:} Scrambles input token IDs during local training.
+\end{itemize}
+We compare standard \texttt{FedAvg} against Byzantine-robust aggregation rules: \textbf{\texttt{Trimmed-Mean}} (coordinate-wise trimming of the $k$ highest/lowest updates) and \textbf{\texttt{Krum}} (selecting the update minimizing Euclidean distance to its $n-f-2$ nearest neighbors).
+
+\subsection{Evaluation Methodology}
+Models are evaluated strictly on held-out test splits (70/15/15 stratified split). Correctness is evaluated across three layers:
+\begin{enumerate}
+    \item \textbf{Secondary Overlap Metrics:} ROUGE-L and BERTScore.
+    \item \textbf{Verdict Classification:} Parsing the generated verdict into Macro-$F_1$ against ground-truth labels.
+    \item \textbf{Primary Correctness (CLEV LLM-as-a-Judge):} Reference-aware binary correctness scoring with 2+1 tie-breaking LLM voting (e.g., using independent Claude 3.5 models at temperature 0). The judge is validated against human annotations to ensure Cohen's $\kappa \ge 0.6$ and Macro-$F_1 \ge 0.85$.
+\end{enumerate}
+
+\end{document}

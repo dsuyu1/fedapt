@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fedapt"
+version = "0.1.0"
+description = "Federated domain-adaptive pre-training for cross-domain security assistant LLMs"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "pyyaml",
+    "numpy",
+    "pandas",
+]
+
+# Heavy / optional extras. Install what a given stage needs:
+#   pip install -e ".[train]"   # GPU training + PEFT/QLoRA
+#   pip install -e ".[eval]"    # metrics + LLM-judge
+[project.optional-dependencies]
+train = [
+    "torch",
+    "transformers>=4.40",
+    "accelerate>=0.28",
+    "datasets>=2.18",
+    "peft>=0.10",
+    "bitsandbytes>=0.43",
+    "sentencepiece",
+    "opacus>=1.4",     # RDP accountant for DP-FedAvg (fedapt.dp)
+]
+eval = [
+    "evaluate",
+    "rouge_score",
+    "bert_score",
+    "scikit-learn",
+    "anthropic",       # Claude judge client; see fedapt.judge
+    "openai",          # or OpenAI judge client
+]
+fetch = ["feedparser", "trafilatura", "beautifulsoup4"]   # vendor RSS harvesting
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
