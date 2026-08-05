@@ -37,6 +37,7 @@ def test_domain_mapping():
 
 
 def test_parse_verdict():
-    assert parse_verdict("... Assessment: malicious") == "malicious"
+    assert parse_verdict("... Assessment: attack") == "attack"
+    assert parse_verdict("shows malicious behaviour. Assessment: attack") == "attack"
     assert parse_verdict("Looks fine. Assessment: benign") == "benign"
     assert parse_verdict("no clear signal") is None

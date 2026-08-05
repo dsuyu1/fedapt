@@ -13,12 +13,12 @@ def test_verdict_balances_classes():
     ben = [_log(i, False) for i in range(3)]
     out = build_verdict(mal, teacher=None, benign=ben, balance=True)
     labels = [r["label"] for r in out]
-    assert labels.count("malicious") == labels.count("benign") == 3   # downsampled to min
+    assert labels.count("attack") == labels.count("benign") == 3   # downsampled to min
 
 
 def test_verdict_without_benign_is_single_class():
     out = build_verdict([_log(i, True) for i in range(5)], teacher=None, benign=None)
-    assert {r["label"] for r in out} == {"malicious"}
+    assert {r["label"] for r in out} == {"attack"}
 
 
 def test_dp_noise_multiplier_fallback_and_inf():

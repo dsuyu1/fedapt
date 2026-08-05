@@ -18,10 +18,26 @@ from typing import Optional
 # --------------------------------------------------------------------------- #
 # environment helpers
 # --------------------------------------------------------------------------- #
-def _load_dotenv(path: str = ".env") -> None:
+def _find_dotenv(name: str = ".env") -> str:
+    """Look for `.env` in the cwd, then walk up (so scripts run from a subdir
+    and the repo root behave the same)."""
+    d = os.path.abspath(os.curdir)
+    while True:
+        p = os.path.join(d, name)
+        if os.path.isfile(p):
+            return p
+        parent = os.path.dirname(d)
+        if parent == d:
+            return name
+        d = parent
+
+
+def _load_dotenv(path: Optional[str] = None) -> None:
     """Minimal .env loader (no dependency). Real env vars take precedence."""
     try:
-        with open(path) as f:
+        # utf-8-sig: tolerate a BOM (Windows editors add one); errors="replace"
+        # so a stray byte in a comment can't take down the whole load.
+        with open(path or _find_dotenv(), encoding="utf-8-sig", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -78,6 +94,15 @@ class Config:
     benign_data_dir: str = field(
         default_factory=lambda: _env("FEDDAPT_BENIGN_DATA", "")
     )
+    # pluggable normalized log sources: comma-separated list of .jsonl files (or
+    # dirs of *.jsonl) produced by scripts/convert_dataset.py. Each line is one
+    # record in the internal schema (see fedapt.datasets), carrying its own
+    # is_malicious flag, so a single source can supply BOTH classes for the
+    # verdict task. This is how paper-backed datasets (AIT, CIC-IDS, CloudTrail)
+    # enter the pipeline — no Splunk lab required. Blank = none.
+    log_sources: str = field(
+        default_factory=lambda: _env("FEDDAPT_LOG_SOURCES", "")
+    )
     # vendor threat-intel / IR write-ups (.json/.txt) added to the DAPT prose corpus.
     vendor_data_dir: str = field(
         default_factory=lambda: _env("FEDDAPT_VENDOR_DATA", "")
@@ -85,6 +110,9 @@ class Config:
 
     # --- reproducibility ---
     seed: int = 42
+    # isolates adapters/results/figures under a named subfolder (e.g. "smoke"),
+    # so a quick test run never collides with or pollutes a real run. "" = default.
+    run_name: str = ""
 
     # --- model ---
     model_id: str = "mistralai/Mistral-7B-v0.1"
@@ -121,7 +149,7 @@ class Config:
 
     # --- evaluation / judge ---
     judge_model: str = field(
-        default_factory=lambda: _env("FEDDAPT_JUDGE_MODEL", "claude-3-5-haiku-20241022")
+        default_factory=lambda: _env("FEDDAPT_JUDGE_MODEL", "claude-haiku-4-5")
     )
     judge_temperature: float = 0.0
 
@@ -137,11 +165,30 @@ class Config:
     @property
     def eval_dir(self) -> str: return os.path.join(self.root, "eval")
     @property
-    def adapters_dir(self) -> str: return os.path.join(self.root, "adapters")
+    def adapters_dir(self) -> str: return os.path.join(self.root, "adapters", self.run_name)
     @property
-    def results_dir(self) -> str: return os.path.join(self.root, "results")
+    def results_dir(self) -> str: return os.path.join(self.root, "results", self.run_name)
     @property
-    def figures_dir(self) -> str: return os.path.join(self.root, "figures")
+    def figures_dir(self) -> str: return os.path.join(self.root, "figures", self.run_name)
+
+    @property
+    def log_source_paths(self) -> list[str]:
+        """Expand `log_sources` (comma-sep files/dirs) into concrete .jsonl paths.
+        A dir contributes every *.jsonl inside it; a file is taken as-is. Missing
+        entries are skipped with a warning rather than crashing the whole build."""
+        import glob as _glob
+        out: list[str] = []
+        for raw in (self.log_sources or "").split(","):
+            p = raw.strip()
+            if not p:
+                continue
+            if os.path.isdir(p):
+                out += sorted(_glob.glob(os.path.join(p, "*.jsonl")))
+            elif os.path.isfile(p):
+                out.append(p)
+            else:
+                print(f"  WARNING: FEDDAPT_LOG_SOURCES entry not found, skipping: {p}")
+        return out
 
     def ensure_dirs(self) -> "Config":
         for d in (self.root, self.scratch, self.corpus_dir, self.clients_dir,

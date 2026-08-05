@@ -32,11 +32,11 @@ DEFAULT_FEEDS = {
     "unit42":        "https://unit42.paloaltonetworks.com/feed/",
     "talos":         "https://blog.talosintelligence.com/rss/",
     "red_canary":    "https://redcanary.com/blog/feed/",
-    "crowdstrike":   "https://www.crowdstrike.com/blog/feed/",
+    "crowdstrike":   "https://www.crowdstrike.com/en-us/blog/feed/",
     "sentinelone":   "https://www.sentinelone.com/labs/feed/",
     "securelist":    "https://securelist.com/feed/",
     "checkpoint":    "https://research.checkpoint.com/feed/",
-    "rapid7":        "https://www.rapid7.com/blog/rss/",
+    "rapid7":        "https://www.rapid7.com/rss.xml",
     "welivesecurity": "https://www.welivesecurity.com/en/rss/feed/",
     "microsoft":     "https://www.microsoft.com/en-us/security/blog/feed/",
 }

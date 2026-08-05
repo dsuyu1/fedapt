@@ -32,16 +32,19 @@ def bert_score(predictions, references, lang="en") -> float:
 
 
 def parse_verdict(text: str) -> str | None:
-    """Extract the hard label from a paragraph verdict ('Assessment: malicious')."""
+    """Extract the capture-level label from a paragraph verdict
+    ('Assessment: attack' / 'Assessment: benign'). 'malicious' is accepted as a
+    synonym for 'attack' for robustness."""
     low = text.lower()
+    is_attack = lambda s: "attack" in s or "malicious" in s
     if "assessment:" in low:
-        tail = low.split("assessment:", 1)[1]
-        if "malicious" in tail[:30]:
-            return "malicious"
-        if "benign" in tail[:30]:
+        tail = low.split("assessment:", 1)[1][:30]
+        if is_attack(tail):
+            return "attack"
+        if "benign" in tail:
             return "benign"
-    if "malicious" in low and "benign" not in low:
-        return "malicious"
-    if "benign" in low and "malicious" not in low:
+    if is_attack(low) and "benign" not in low:
+        return "attack"
+    if "benign" in low and not is_attack(low):
         return "benign"
     return None

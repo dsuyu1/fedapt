@@ -26,6 +26,7 @@ import yaml
 from .config import Config
 
 # map Splunk sourcetypes -> our security domains (for non-IID + task routing)
+# turns a Splunk sourcetype into one of the three domains (endpoint, network, cloud).
 _SOURCETYPE_DOMAIN = {
     "sysmon": "endpoint", "windows": "endpoint", "wineventlog": "endpoint",
     "security": "endpoint", "powershell": "endpoint", "crowdstrike": "endpoint",
@@ -105,6 +106,8 @@ def load_attack_data(attack_data_dir: str, max_lines_per_log: int = 40) -> list[
                 continue
             if not lines:
                 continue
+            if lines[0].startswith("version https://git-lfs"):
+                continue                               # un-pulled LFS pointer, not real logs
             snippet = "\n".join(lines[:max_lines_per_log])
             records.append({
                 "log": snippet,
@@ -169,8 +172,20 @@ def build_clients(cfg: Config) -> dict:
     else:
         print("  no prose corpus yet — run corpus.build_corpus first.")
 
-    # 2) log slices for per-org task grounding
-    logs = load_attack_data(cfg.attack_data_dir)
+    # 2) log slices for per-org task grounding.
+    # Sources are merged and then split by class: malicious -> client_*_logs.json
+    # (grounds explain_log + the positive verdict class), benign ->
+    # client_*_benign.json (the negative verdict class). Sources:
+    #   * attack_data          (all malicious)          -- optional legacy path
+    #   * FEDDAPT_BENIGN_DATA   (all benign, raw .log)   -- optional
+    #   * FEDDAPT_LOG_SOURCES   (normalized .jsonl, BOTH classes via is_malicious)
+    from . import datasets as _D
+    logs = load_attack_data(cfg.attack_data_dir)           # malicious
+    benign = load_benign(cfg.benign_data_dir)              # benign
+    for src in cfg.log_source_paths:                       # normalized, either class
+        for r in _D.load_normalized(src):
+            (logs if r.get("is_malicious") else benign).append(r)
+
     if logs:
         slices = dirichlet_partition(logs, lambda r: r["domain"],
                                      cfg.n_clients, cfg.dirichlet_alpha, cfg.seed)
@@ -181,7 +196,6 @@ def build_clients(cfg: Config) -> dict:
         print("log slices:", out["logs"])
 
     # 3) benign log slices (negative class for the verdict task)
-    benign = load_benign(cfg.benign_data_dir)
     if benign:
         slices = dirichlet_partition(benign, lambda r: r["domain"],
                                      cfg.n_clients, cfg.dirichlet_alpha, cfg.seed)

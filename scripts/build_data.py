@@ -1,7 +1,10 @@
 """Build the whole data layer end to end.
 
     python scripts/build_data.py                 # metadata-fallback targets (offline)
-    python scripts/build_data.py --teacher gpt-4o-mini   # real synthesized targets
+    python scripts/build_data.py --teacher claude-haiku-4-5   # real synthesized targets
+
+    # regenerate ONLY the verdict targets in place (cheap; keeps inputs/splits):
+    python scripts/build_data.py --teacher claude-haiku-4-5 --resynth verdict
 
 Runs: prose corpus -> non-IID clients (prose shards + log slices) -> 4 task
 datasets -> train/val/test splits + held-out ids. Everything lands under
@@ -17,6 +20,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--teacher", default="", help="LLM model id for target synthesis (optional)")
     ap.add_argument("--skip-corpus", action="store_true", help="reuse existing prose corpus")
+    ap.add_argument("--resynth", default="", choices=["", "verdict"],
+                    help="re-generate only this task's targets in place, then exit")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -27,6 +32,10 @@ def main():
         from fedapt.judge import make_llm
         teacher = make_llm(args.teacher, temperature=0.0)
         print("teacher:", args.teacher)
+
+    if args.resynth == "verdict":                      # targeted repair, no full rebuild
+        tasks.resynthesize_verdict(cfg, teacher)
+        return
 
     print("\n== 1. prose corpus ==")
     if not args.skip_corpus:

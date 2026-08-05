@@ -17,6 +17,11 @@ FedDAPT/
 .ipynb_checkpoints/
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
+
+# --- Agent/session cache (never commit — may contain transcripts/keys) ---
+.claude/
 .venv/
 venv/
 

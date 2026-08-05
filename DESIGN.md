@@ -105,13 +105,24 @@ Model input varies; **output is always prose**. Labels come from dataset
 metadata + teacher-synthesized targets (see §7).
 
 1. **Explain an example** — scenario/case walk-through. (src: ATT&CK procedures, DFIR)
-2. **Explain a log snippet** — interpret telemetry. *The org-private, most novel task.* (src: `attack_data`)
+2. **Explain a log snippet** — interpret telemetry. *The org-private, most novel task; primary.* (src: `attack_data`)
 3. **General security question** — open QA. (src: security Q&A, synthesized from prose)
-4. **Verdict with rationale** — "is this bad, and why," in paragraph form. (src: `attack_data` benign/malicious labels)
+4. **Verdict with rationale** — capture-level "does this contain attack activity, and why," in paragraph form. (src: `attack_data`)
 
-Tasks 2 and 4 are the **primary contribution**; 1 and 3 are auxiliary. Task 4
-paragraph-form both matches how analysts communicate and avoids the brittle
-exact-match metric that sank the old ATT&CK eval.
+Tasks 2 and 4 are the **primary contribution**; 1 and 3 are auxiliary. Paragraph
+form matches how analysts communicate and avoids the brittle exact-match metric
+that sank the old ATT&CK eval.
+
+**Label granularity (important, disclose in the paper).** `attack_data` labels
+are **record-level** (per log sample), not line-level: a record is mostly normal
+background activity with the attack embedded, and the technique label means "an
+attack occurred somewhere in this activity." We therefore frame the verdict task
+at the record level — *"does this activity contain evidence of attack activity?"*
+(labels `attack` / `benign`) — rather than "is this line malicious," which the
+labels don't support. Negatives come from a real benign source
+(`FEDDAPT_BENIGN_DATA`) or, if none, teacher-synthesized (flagged `synthetic`).
+Because of this granularity, `explain_log` (record-level by nature) is the
+cleaner primary log task; `verdict` is reported with this caveat.
 
 ---
 

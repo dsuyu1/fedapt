@@ -5,7 +5,7 @@
 
 The judge needs an independent model and a key:
     ANTHROPIC_API_KEY=...           (or OPENAI_API_KEY)
-    FEDDAPT_JUDGE_MODELS=claude-3-5-haiku-20241022,claude-3-5-sonnet-20241022   (two judges -> CLEV voting)
+    FEDDAPT_JUDGE_MODELS=claude-haiku-4-5,claude-sonnet-4-6   (two judges -> CLEV voting)
 Do NOT use the base model under test as a judge.
 """
 import argparse

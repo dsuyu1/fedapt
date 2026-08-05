@@ -26,13 +26,26 @@ from .config import Config
 Teacher = Optional[Callable[[str], str]]
 
 
+_FB = {"n": 0}   # count of targets that fell back due to a teacher error (per build)
+
+
 def _target(teacher: Teacher, prompt: str, fallback: str) -> str:
     if teacher is None:
         return fallback
     try:
-        return teacher(prompt).strip() or fallback
+        out = teacher(prompt).strip()
+        if out:
+            return out
     except Exception:
-        return fallback
+        pass
+    _FB["n"] += 1                    # teacher was set but the call failed
+    return fallback
+
+
+def _verdict_prompt(domain: str, log: str) -> str:
+    return (f"The following {domain} activity is mostly normal background activity. "
+            f"Does it contain evidence of attack activity? Explain your reasoning, then "
+            f"end with 'Assessment: attack' or 'Assessment: benign':\n{log}")
 
 
 # --------------------------------------------------------------------------- #
@@ -118,11 +131,15 @@ def build_verdict(logs: list[dict], teacher: Teacher = None, benign: list[dict] 
     random.Random(seed).shuffle(pool)
     out = []
     for r in pool:
-        label = "malicious" if r.get("is_malicious", True) else "benign"
-        prompt = (f"Assess this {r.get('domain','')} telemetry. Explain your reasoning, "
-                  f"then end with 'Assessment: malicious' or 'Assessment: benign':\n{r['log']}")
-        fallback = (f"The activity in this {r.get('domain','')} telemetry is {label}. "
-                    f"Assessment: {label}")
+        # Record-level label: the technique label is ground truth for the whole
+        # record ("an attack occurred somewhere in this activity"), NOT per line.
+        # So the question is whether the activity *contains evidence of attack
+        # activity*, not whether every line is malicious. (See DESIGN.md note.)
+        label = "attack" if r.get("is_malicious", True) else "benign"
+        prompt = _verdict_prompt(r.get("domain", ""), r["log"])
+        verdict_txt = ("contains evidence of attack activity" if label == "attack"
+                       else "shows only normal activity")
+        fallback = f"This {r.get('domain','')} activity {verdict_txt}. Assessment: {label}"
         out.append({"task": "verdict", "input": r["log"],
                     "target": _target(teacher, prompt, fallback),
                     "label": label, "client": r.get("client"),
@@ -157,16 +174,52 @@ def build_tasks(cfg: Config, teacher: Teacher = None) -> dict:
         domains = sorted({r["domain"] for r in logs}) or ["endpoint", "network", "cloud"]
         benign = synthesize_benign(teacher, domains)
 
-    datasets = {
-        "explain_example": build_explain_example(prose, teacher),
-        "explain_log": build_explain_log(logs, teacher),
-        "general_qa": build_general_qa(prose, teacher),
-        "verdict": build_verdict(logs, teacher, benign=benign),
-    }
-    for name, rows in datasets.items():
+    builders = [
+        ("explain_example", lambda: build_explain_example(prose, teacher)),
+        ("explain_log", lambda: build_explain_log(logs, teacher)),
+        ("general_qa", lambda: build_general_qa(prose, teacher)),
+        ("verdict", lambda: build_verdict(logs, teacher, benign=benign)),
+    ]
+    datasets = {}
+    for name, fn in builders:
+        _FB["n"] = 0                                   # reset per-task fallback counter
+        rows = fn()
+        datasets[name] = rows
         json.dump(rows, open(os.path.join(cfg.tasks_dir, f"{name}.json"), "w"))
-        print(f"  task {name}: {len(rows)} examples")
+        note = ""
+        if teacher is not None and _FB["n"]:
+            note = (f"  ⚠ {_FB['n']}/{len(rows)} targets FELL BACK (teacher errors — "
+                    f"likely rate limit; re-run with --resynth {name})")
+        print(f"  task {name}: {len(rows)} examples{note}")
     if teacher is None:
         print("  NOTE: no teacher — targets are weak metadata fallbacks. "
               "Pass a teacher (fedapt.judge.make_llm) for real targets.")
     return datasets
+
+
+def resynthesize_verdict(cfg: Config, teacher: Teacher):
+    """Re-generate ONLY the verdict targets in place, reusing the existing inputs,
+    labels and splits. Use this when the verdict targets fell back to templates
+    (e.g. the teacher was rate-limited on the last, largest task). Cheap: it only
+    re-runs the teacher on the verdict records, not the whole pipeline.
+
+    A record keeps its old target if the teacher fails again, so nothing is lost.
+    """
+    if teacher is None:
+        raise SystemExit("resynthesize_verdict needs a teacher")
+    split_path = os.path.join(cfg.eval_dir, "verdict_split.json")
+    if not os.path.exists(split_path):
+        raise SystemExit("no verdict_split.json — run build_data first")
+    data = json.load(open(split_path))
+    ok = fb = 0
+    for part in ("train", "val", "test"):
+        for r in data[part]:
+            prompt = _verdict_prompt(r.get("meta", {}).get("domain", ""), r["input"])
+            _FB["n"] = 0
+            r["target"] = _target(teacher, prompt, r["target"])   # keep old on failure
+            fb += _FB["n"]; ok += (1 - _FB["n"])
+    json.dump(data, open(split_path, "w"))
+    tp = os.path.join(cfg.tasks_dir, "verdict.json")             # keep tasks/ in sync
+    if os.path.exists(tp):
+        json.dump(data["train"] + data["val"] + data["test"], open(tp, "w"))
+    print(f"verdict targets re-synthesised: {ok} refreshed, {fb} still fell back -> {split_path}")

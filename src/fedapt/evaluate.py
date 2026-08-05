@@ -55,7 +55,7 @@ def evaluate_records(model, tokenizer, records, task, device, judges=None) -> di
     metrics = {"rouge_l": EM.rouge_l(preds, refs), "n": len(records)}
     if task == "verdict" and y_true:
         metrics["verdict_macro_f1"] = float(
-            f1_score(y_true, y_pred, labels=["malicious", "benign"], average="macro", zero_division=0))
+            f1_score(y_true, y_pred, labels=["attack", "benign"], average="macro", zero_division=0))
     if judges:
         from .judge import score_free_form
         metrics["judge_correct"] = score_free_form(judges, judge_items)
@@ -70,13 +70,16 @@ def _test_records(cfg: Config, task: str, client: str | None = None) -> list[dic
     return rows if client is None else [r for r in rows if r.get("client") == client]
 
 
-def evaluate_model(cfg, adapter_id, tokenizer, device, judges=None, tasks=None) -> dict:
-    """Evaluate one adapter (or zero-shot if None) across all task test sets."""
+def evaluate_model(cfg, adapter_id, tokenizer, device, judges=None, tasks=None, limit=None) -> dict:
+    """Evaluate one adapter (or zero-shot if None) across all task test sets.
+    `limit` caps records per task (for a fast smoke run)."""
     model = M.load_eval_model(cfg, adapter_id)
     tasks = tasks or ["explain_log", "verdict", "explain_example", "general_qa"]
     per_task = {}
     for t in tasks:
         recs = _test_records(cfg, t)
+        if limit:
+            recs = recs[:limit]
         if recs:
             per_task[t] = evaluate_records(model, tokenizer, recs, t, device, judges)
     del model
@@ -98,9 +101,10 @@ def _macro_average(dicts: list[dict]) -> dict:
     return out
 
 
-def run_eval(cfg: Config, use_judge: bool = False):
+def run_eval(cfg: Config, use_judge: bool = False, limit: int | None = None):
     """Evaluate zero-shot, every DAPT adapter, and each task-tuned row
-    (macro-averaged over clients). Writes results/<id>.json."""
+    (macro-averaged over clients). Writes results/<id>.json. `limit` caps test
+    records per task (smoke runs)."""
     import torch
     cfg.ensure_dirs()
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -121,7 +125,7 @@ def run_eval(cfg: Config, use_judge: bool = False):
     if not os.path.exists(os.path.join(cfg.results_dir, "zeroshot.json")):
         print("== zeroshot ==")
         _write("zeroshot", {"id": "zeroshot", "stage": "baseline",
-                            "tasks": evaluate_model(cfg, None, tokenizer, device, judges)})
+                            "tasks": evaluate_model(cfg, None, tokenizer, device, judges, limit=limit)})
 
     # 2) DAPT-only adapters (evaluated directly on tasks)
     for mp in sorted(glob.glob(os.path.join(cfg.adapters_dir, "dapt_*", "meta.json"))):
@@ -129,7 +133,7 @@ def run_eval(cfg: Config, use_judge: bool = False):
         if os.path.exists(os.path.join(cfg.results_dir, f"{rid}.json")):
             continue
         print("==", rid, "==")
-        _write(rid, {**meta, "tasks": evaluate_model(cfg, rid, tokenizer, device, judges)})
+        _write(rid, {**meta, "tasks": evaluate_model(cfg, rid, tokenizer, device, judges, limit=limit)})
 
     # 3) task-tuned rows: group task_<row>__<client>, macro-average over clients
     rows: dict = {}
@@ -140,7 +144,7 @@ def run_eval(cfg: Config, use_judge: bool = False):
         if os.path.exists(os.path.join(cfg.results_dir, f"{rid}.json")):
             continue
         print("== task row", row, "==")
-        per_client = [evaluate_model(cfg, i, tokenizer, device, judges) for i in ids]
+        per_client = [evaluate_model(cfg, i, tokenizer, device, judges, limit=limit) for i in ids]
         _write(rid, {"id": rid, "stage": "task", "row": row, "n_clients": len(ids),
                      "tasks": _macro_average(per_client)})
     print("evaluation done — results in", cfg.results_dir)
