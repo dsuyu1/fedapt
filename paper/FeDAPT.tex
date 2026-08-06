@@ -108,9 +108,9 @@ Each organization warm-starts from $w^*$ and tunes locally on its private, log-g
 The shared DAPT corpus is natural-language security text from four authoritative public sources: MITRE ATT\&CK Enterprise~\cite{strom2018attack} (technique, group, software, and procedure text); SigmaHQ detection-rule descriptions; NVD CVE descriptions; and the CISA Known Exploited Vulnerabilities catalog.
 
 \subsubsection{Log Telemetry and Non-IID Dirichlet Skew (Stage 2)}
-Client task data comprises raw telemetry from public, paper-backed log datasets---the AIT Log Data Set~\cite{landauer2022ait} (matched benign/attack enterprise logs), CIC-IDS2017~\cite{sharafaldin2017cicids} and UNSW-NB15~\cite{moustafa2015unsw} (network flows), and Stratus Red Team CloudTrail detonations~\cite{stratus2023}, optionally alongside \texttt{splunk/attack\_data}---each converted to a common record schema and, where applicable, supplying both the attack and benign classes from a single matched environment. \emph{These public datasets are partitioned across simulated organizations to stand in for genuinely private per-organization data.} Telemetry spans three domains: \emph{Endpoint} (Sysmon, WinEvent~4688, PowerShell), \emph{Network} (Zeek, Suricata, firewall), and \emph{Cloud} (AWS CloudTrail, Azure, Okta). To simulate enterprise heterogeneity, data is partitioned non-IID across $N{=}6$ clients using a Dirichlet distribution $\boldsymbol{p}\sim\mathrm{Dir}(\alpha)$ over domains ($\alpha{=}0.5$); small $\alpha$ concentrates domains within individual clients.
+Client task data comprises raw telemetry from public, paper-backed log datasets---the AIT Log Data Set~\cite{landauer2022ait} (matched benign/attack enterprise logs), CIC-IDS2017~\cite{sharafaldin2017cicids} and UNSW-NB15~\cite{moustafa2015unsw} (network flows), and Stratus Red Team CloudTrail detonations~\cite{stratus2023}, optionally alongside \texttt{splunk/attack\_data}---each converted to a common record schema and, where applicable, supplying both the attack and benign classes from a single matched environment. \emph{These public datasets are partitioned across simulated organizations to stand in for genuinely private per-organization data.} Telemetry spans three domains: \emph{Endpoint} (Sysmon, WinEvent~4688, PowerShell), \emph{Network} (Zeek, Suricata, firewall), and \emph{Cloud} (AWS CloudTrail, Azure, Okta). To simulate enterprise heterogeneity, data is partitioned non-IID across $N{=}6$ clients using a Dirichlet distribution $\boldsymbol{p}\sim\mathrm{Dir}(\alpha)$ over domains ($\alpha{=}0.5$); small $\alpha$ concentrates domains within individual clients. Each source is converted once, offline, into a common record schema $\langle\text{log},\text{domain},\text{technique},\text{is\_malicious}\rangle$ and merged through a single pluggable interface, so the pipeline consumes any combination of datasets (and optionally \texttt{attack\_data}) without source-specific code.
 
-\paragraph{Label granularity (disclosure).} \texttt{attack\_data} labels are \emph{record-level}, not line-level: a telemetry record is mostly normal background activity with an attack embedded, and its technique label indicates that an attack occurred somewhere in the record. We therefore frame the verdict task at the record level---\emph{``does this activity contain evidence of attack activity?''} (labels \texttt{attack}/\texttt{benign})---rather than a per-line malicious/benign judgment the labels do not support.
+\paragraph{Label granularity (disclosure).} Sources differ in label resolution: AIT labels individual log lines, whereas \texttt{attack\_data} labels whole captures. We normalize both to a common \emph{record} level by windowing each log into fixed-length segments and labeling a segment \texttt{attack} iff it contains at least one attack-labeled line (for \texttt{attack\_data}, the entire record inherits its capture label). We therefore frame the verdict task at the record level---\emph{``does this activity contain evidence of attack activity?''} (labels \texttt{attack}/\texttt{benign})---rather than a per-line malicious/benign judgment, which the coarser sources do not support and which would inject label noise.
 
 \subsubsection{Task Taxonomy and Target Synthesis}
 Stage~2 defines four prose-output tasks:
@@ -149,38 +149,33 @@ Configurations are selected on the validation split; the test split is reported 
 \paragraph{Byzantine.} $f{=}1$ of $N{=}6$; scaling factor $\beta{=}10$; trimmed-mean ratio $0.2$.
 \paragraph{Local Stage 2.} Learning rate $1{\times}10^{-5}$, one epoch, completion-only masking.
 \paragraph{Teacher and judge models.} Reference targets are synthesized by an independent teacher LLM, and free-form correctness is scored by independent judge LLMs; both are distinct from the Mistral-7B base under test. In credit-constrained runs these are served locally (Ollama) at temperature~0---e.g., a Qwen3-14B teacher and a Gemma~3 12B $+$ Llama~3.1 8B judge panel with a third judge on disagreement---so that no metered API can rate-limit target synthesis into silent fallbacks. The exact teacher/judge models and the judge's human-validated Cohen's $\kappa$ and Macro-$F_1$ are reported alongside results.
+\paragraph{Implementation and reproducibility.} The framework is a tested Python package driven by a single \texttt{Config}. Data preparation, federated Stage~1, Stage~2 task tuning, evaluation, and analysis run as independent, \emph{resumable} stages---completed adapters and result files are skipped on re-run---via command-line scripts or thin notebooks (Colab GPU). Public datasets enter through one-time converters into the common record schema; teacher and judge models are pluggable and may be API-hosted or served locally, enabling fully offline, no-cost runs.
 
 \begin{table}[t]
 \centering
-\caption{Realized data pipeline (public sources; simulated federation). Prose corpus totals 35{,}033 documents.}
+\caption{Realized Stage-1 prose corpus (public sources).}
 \label{tab:data}
-\begin{tabular}{llr}
+\begin{tabular}{lr}
 \toprule
-Layer & Source / domain & Count \\
+Source & Documents \\
 \midrule
-Prose corpus & MITRE ATT\&CK & 19{,}366 \\
-             & NVD CVE       & 9{,}999 \\
-             & SigmaHQ       & 4{,}013 \\
-             & CISA KEV      & 1{,}655 \\
+MITRE ATT\&CK & 19{,}906 \\
+NVD CVE       & 9{,}999 \\
+SigmaHQ       & 4{,}233 \\
+CISA KEV      & 1{,}660 \\
 \midrule
-Log telemetry & Endpoint & 355 \\
-              & Cloud    & 97 \\
-              & Network  & 22 \\
-              & General  & 101 \\
-\midrule
-Tasks & \texttt{explain\_log}     & 575 \\
-      & \texttt{verdict} (bal.)   & 400 \\
-      & \texttt{explain\_example} & 500 \\
-      & \texttt{general\_qa}      & 500 \\
+Total & 35{,}042 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+The Stage-2 log-grounded tasks (\texttt{explain\_log}, \texttt{verdict}) and the two prose tasks (\texttt{explain\_example}, \texttt{general\_qa}) are constructed from the matched both-class datasets described above through the ingestion layer; per-dataset record counts and the teacher-synthesized targets are finalized at build time and reported with results.
 
 \begin{figure}[t]
 \centering
 % produced by scripts/analyze.py (data_report/data_overview.png)
 \includegraphics[width=0.95\linewidth]{data_overview.png}
-\caption{Data distribution: prose corpus by source, non-IID prose shards per client, log records per client, and log records by security domain. The heavy per-client skew is the intended non-IID setting.}
+\caption{Data distribution: prose corpus by source, non-IID prose shards per client, log records per client, and log records by security domain. The heavy per-client skew is the intended non-IID setting. The log panels illustrate the partitioning mechanism and are regenerated for each dataset build.}
 \label{fig:data}
 \end{figure}
 
